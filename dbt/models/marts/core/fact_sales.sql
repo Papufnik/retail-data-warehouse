@@ -6,9 +6,44 @@
 -- changed. Using dim_item (current-only) here would silently rewrite
 -- history every time the catalog changes, which is exactly the kind of bug
 -- a "just join the latest catalog" report has in production.
+--
+-- INCREMENTAL, not full-refresh, past the initial build. This is the one
+-- table in this project whose row count actually scales with transaction
+-- volume rather than catalog size -- see docs/adr/0001-incremental-fact-
+-- sales.md for the full reasoning (full-refresh cost grows with total
+-- history, incremental cost grows with new activity only) and the known
+-- caveat this pattern accepts (a retroactive dimension change on
+-- already-loaded rows needs an explicit --full-refresh, not another
+-- incremental run, to be reflected).
+
+{#
+  partition_by / cluster_by are BigQuery-specific dbt config -- applied only
+  when the active target is bigquery so the DuckDB target (the default,
+  zero-setup path -- see README) is completely unaffected. Partitioning by
+  date_key means the high-water-mark filter above (`export_date > max(...)`)
+  prunes to a handful of partitions instead of scanning the whole table, and
+  clustering by category_key speeds up the category-level rollups this
+  project's reports actually run. See docs/adr/0002-bigquery-partitioning-
+  strategy.md for the full reasoning and the numbers behind it.
+#}
+{{ config(
+    materialized='incremental',
+    unique_key='sales_key',
+    incremental_strategy='delete+insert',
+    partition_by={'field': 'date_key', 'data_type': 'date'} if target.type == 'bigquery' else none,
+    cluster_by=['category_key'] if target.type == 'bigquery' else none
+) }}
 
 with line_items as (
     select * from {{ ref('stg_toast_order_line_items') }}
+    {% if is_incremental() %}
+    -- High-water-mark filter: only re-derive rows for export dates newer
+    -- than what's already in this table. Cheap on DuckDB and BigQuery
+    -- alike since date_key is the natural partition/cluster column (see
+    -- the ADR) -- this is a metadata-pruned scan, not a full table scan,
+    -- once partitioned.
+    where export_date > (select coalesce(max(date_key), date '1900-01-01') from {{ this }})
+    {% endif %}
 ),
 
 orders as (

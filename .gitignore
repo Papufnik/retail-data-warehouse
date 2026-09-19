@@ -2,6 +2,7 @@
 dbt/target/
 dbt/dbt_packages/
 dbt/logs/
+dbt/.user.yml
 
 # DuckDB warehouse files -- built by scripts/load_raw_to_duckdb.py + dbt,
 # not committed so every clone builds its own from the committed sample
@@ -23,3 +24,10 @@ __pycache__/
 # for how these get supplied.
 *service-account*.json
 .env
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.*
+infra/terraform/terraform.tfvars
+infra/terraform/*.tfplan

@@ -1,0 +1,2 @@
+# Copy to terraform.tfvars (gitignored) and fill in your own project.
+project_id = "your-gcp-project-id"

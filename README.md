@@ -1,6 +1,9 @@
 # Retail Data Warehouse
 
 [![dbt build + test](https://github.com/Papufnik/retail-data-warehouse/actions/workflows/ci.yml/badge.svg)](https://github.com/Papufnik/retail-data-warehouse/actions/workflows/ci.yml)
+[![dbt docs](https://img.shields.io/badge/dbt%20docs-lineage%20graph-orange)](https://papufnik.github.io/retail-data-warehouse/)
+
+**[Browse the interactive docs + column-level lineage graph](https://papufnik.github.io/retail-data-warehouse/)** -- generated straight from this project with `dbt docs generate`, not hand-written.
 
 An orchestrated, tested dimensional data warehouse (anonymized) modeled on a real small retail business's POS pipeline. Raw daily exports get loaded, transformed into a proper star schema with dbt, tested on every build, and orchestrated by Airflow -- built to show the pieces a "flat tables in a spreadsheet" pipeline doesn't have: dimensional modeling, a real Type-2 slowly changing dimension, data-quality tests that catch real bugs, and a build that's reproducible in CI.
 
@@ -62,15 +65,34 @@ Un-pause `retail_warehouse_pipeline` in the UI (DAGs are created paused on purpo
 
 ### Running against BigQuery
 
-The `bigquery` target in `dbt/profiles.yml` points the same models at a real cloud warehouse instead of DuckDB -- nothing in the dbt project itself is DuckDB-specific. To use it: create a free-tier GCP project, generate a service account key with BigQuery Data Editor + Job User roles, then
+The `bigquery` target in `dbt/profiles.yml` points the same models at a real cloud warehouse instead of DuckDB -- nothing in the dbt project itself is DuckDB-specific. `fact_sales` also picks up BigQuery-specific partitioning and clustering automatically on this target (see [ADR 0002](docs/adr/0002-bigquery-partitioning-strategy.md)) -- no config changes needed to get that.
+
+The dataset and a scoped service account are provisioned as code in `infra/terraform/` (see [ADR 0003](docs/adr/0003-terraform-for-bigquery-provisioning.md)) rather than clicked together by hand:
+
+```bash
+cd infra/terraform
+terraform init
+terraform apply -var="project_id=your-gcp-project-id"
+terraform output -raw service_account_key_json | base64 -d > key.json
+```
+
+Then:
 
 ```bash
 export BIGQUERY_PROJECT=your-gcp-project-id
-export BIGQUERY_KEYFILE=/path/to/service-account.json
+export BIGQUERY_KEYFILE=/path/to/key.json
 cd dbt && dbt build --target bigquery
 ```
 
 The key file is gitignored and never committed. CI intentionally does **not** run against BigQuery (see `.github/workflows/ci.yml` for why) -- it's a local/manual target for demonstrating the same models against a real cloud platform.
+
+## Scaling this up
+
+Everything above runs comfortably on a laptop against a synthetic month of one store's data. `docs/adr/` documents, with real reasoning (not hand-waving), what specifically changes if this had to run for 10 stores and millions of transactions instead:
+
+- **[ADR 0001](docs/adr/0001-incremental-fact-sales.md)** -- why `fact_sales` is an incremental model, not a full-refresh table, and what that trades away
+- **[ADR 0002](docs/adr/0002-bigquery-partitioning-strategy.md)** -- why it's partitioned by date and clustered by category on BigQuery, and the real partition-count math behind that choice
+- **[ADR 0003](docs/adr/0003-terraform-for-bigquery-provisioning.md)** -- why the cloud infrastructure is provisioned as code instead of clicked together, and what's deliberately *not* automated yet
 
 ## Design decisions
 
@@ -84,6 +106,8 @@ The key file is gitignored and never committed. CI intentionally does **not** ru
 
 **CI runs against DuckDB, not BigQuery.** A public repo's Actions workflow running real cloud-billed queries on every push (and every fork's pull request) is a credential-exposure and cost-abuse surface, not just a config detail. DuckDB gives the exact same dbt models a fast, free, zero-credential target for CI; BigQuery stays available as a manual target for anyone who wants to see it against a real warehouse.
 
+**`fact_sales` is incremental, not full-refresh.** Verified with an actual before/after: built full, added a real day of new synthetic order data, reran without `--full-refresh`, and confirmed the row count grew by exactly that day's line-item count with zero duplicate keys -- the second run touched only the new data, not the existing rows. Full reasoning, including the trade-off this accepts, in [ADR 0001](docs/adr/0001-incremental-fact-sales.md).
+
 **The ingestion ledger reuses a pattern from the source pipeline.** Every day's raw export folder has identically-named files (`OrderDetails.csv`, `ItemSelectionDetails.csv` in every `YYYYMMDD/` folder) -- a bare filename isn't a safe idempotency key. `scripts/load_raw_to_duckdb.py`'s `ingested_files` ledger keys on `{export_date}/{filename}` instead, the same fix this exact bug got in the production system this project is modeled on.
 
 ## Data model
@@ -95,15 +119,15 @@ The key file is gitignored and never committed. CI intentionally does **not** ru
 | `dim_date` | one row per calendar day | |
 | `dim_vendor` | one row per supplier | |
 | `dim_category` | one row per category/subcategory | |
-| `fact_sales` | one row per order line item sold | as-of joined to `dim_item_history` |
+| `fact_sales` | one row per order line item sold | as-of joined to `dim_item_history`; incremental (see ADR 0001) |
 | `fact_daily_sales_summary` | one row per date × category | pre-aggregated rollup |
 
 ## Stack
 
-Python, dbt-core + dbt-duckdb, DuckDB, Apache Airflow (Docker), GitHub Actions.
+Python, dbt-core + dbt-duckdb, DuckDB, Apache Airflow (Docker), GitHub Actions, Terraform (BigQuery infra).
 
 ## My role
 
-I directed this build from a real production retail data pipeline I designed and run for an actual small business -- the item catalog structure, the daily-export idempotency gotcha, and the layered "raw → staging → marts" approach all come from that system. I specified the star schema and the as-of join requirement, found and fixed the sample-data bug in Design decisions above by reading what the dbt test actually reported, and verified the full build (`dbt build`, all 41 tests) green from a clean clone before calling this done.
+I directed this build from a real production retail data pipeline I designed and run for an actual small business -- the item catalog structure, the daily-export idempotency gotcha, and the layered "raw → staging → marts" approach all come from that system. I specified the star schema and the as-of join requirement, found and fixed the sample-data bug in Design decisions above by reading what the dbt test actually reported, and verified the full build (`dbt build`, all 41 tests) green from a clean clone before calling this done. I later pushed past "works on my laptop": converted the fact table to incremental with a real before/after verification, added BigQuery partitioning/clustering and Terraform-provisioned infrastructure for the cloud target, and wrote the ADRs above arguing for each of those choices -- the questions a senior-level review actually asks.
 
 *Business name, item catalog, and all data are synthetic/anonymized -- not a real business's actual records. The pipeline architecture, the schema design decisions, and the gotchas documented above are drawn from a real production system.*
