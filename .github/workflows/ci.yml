@@ -1,0 +1,42 @@
+name: dbt build + test
+
+# Runs the full pipeline against DuckDB on every push/PR -- no cloud
+# credentials required, so this works the same way for anyone who forks the
+# repo. The BigQuery target exists for a live cloud demo (see README) but
+# is deliberately NOT wired into CI: a public repo's Actions workflow
+# running real, potentially-forked PRs against billed cloud resources is a
+# credential-exposure and cost-abuse pattern worth avoiding, not an
+# oversight.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  dbt-build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate sample data
+        run: python3 scripts/generate_sample_data.py
+
+      - name: Load raw data into DuckDB
+        env:
+          WAREHOUSE_DB_PATH: data/warehouse_ci.duckdb
+        run: python3 scripts/load_raw_to_duckdb.py
+
+      - name: dbt build (run + test)
+        working-directory: dbt
+        env:
+          DBT_PROFILES_DIR: .
+        run: dbt build --target ci

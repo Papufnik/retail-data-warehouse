@@ -1,0 +1,25 @@
+# dbt build artifacts
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+
+# DuckDB warehouse files -- built by scripts/load_raw_to_duckdb.py + dbt,
+# not committed so every clone builds its own from the committed sample
+# data in data/raw/.
+data/*.duckdb
+data/*.duckdb.wal
+
+# Airflow runtime
+airflow/logs/
+airflow/plugins/
+airflow-webserver.pid
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Local secrets -- never committed. See README > Running against BigQuery
+# for how these get supplied.
+*service-account*.json
+.env

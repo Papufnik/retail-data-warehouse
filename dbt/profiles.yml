@@ -1,0 +1,27 @@
+# Committed on purpose -- there are no secrets in it. The default target
+# (`dev`) points dbt at a local DuckDB file, so this whole project builds
+# and tests with zero external accounts. The `bigquery` target is provided
+# to show the same models running against a real cloud warehouse; it needs
+# a service account key that is NOT committed (see README > Running against
+# BigQuery).
+retail_warehouse:
+  target: dev
+  outputs:
+    dev:
+      type: duckdb
+      path: "../data/warehouse.duckdb"
+      threads: 4
+
+    ci:
+      type: duckdb
+      path: "../data/warehouse_ci.duckdb"
+      threads: 4
+
+    bigquery:
+      type: bigquery
+      method: service-account
+      project: "{{ env_var('BIGQUERY_PROJECT', 'your-gcp-project-id') }}"
+      dataset: "retail_warehouse"
+      keyfile: "{{ env_var('BIGQUERY_KEYFILE', '/path/to/service-account.json') }}"
+      threads: 4
+      location: US

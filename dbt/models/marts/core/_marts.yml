@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: dim_item_history
+    description: Type-2 slowly changing dimension for the item catalog. See model doc comment for why this is built via window functions rather than dbt snapshot.
+    columns:
+      - name: item_history_key
+        tests: [not_null, unique]
+      - name: item_id
+        tests: [not_null]
+      - name: valid_from
+        tests: [not_null]
+
+  - name: dim_item
+    description: Current-state view of the item catalog (one row per item_id).
+    columns:
+      - name: item_key
+        tests: [not_null, unique]
+      - name: item_id
+        tests: [not_null, unique]
+
+  - name: dim_date
+    columns:
+      - name: date_day
+        tests: [not_null, unique]
+
+  - name: dim_vendor
+    columns:
+      - name: vendor_key
+        tests: [not_null, unique]
+
+  - name: dim_category
+    columns:
+      - name: category_key
+        tests: [not_null, unique]
+
+  - name: fact_sales
+    description: One row per order line item sold. See model doc comment for the as-of dimension join logic.
+    columns:
+      - name: sales_key
+        tests: [not_null, unique]
+      - name: item_history_key
+        description: Must always resolve -- a null here means a line item's sale date fell outside every version's valid_from/valid_to window, i.e. a gap in dimension coverage.
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_item_history')
+                field: item_history_key
+      - name: date_key
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: net_price
+        tests:
+          - not_null
+
+  - name: fact_daily_sales_summary
+    description: Date x category rollup of fact_sales, voided orders excluded.
+    columns:
+      - name: date_key
+        tests: [not_null]

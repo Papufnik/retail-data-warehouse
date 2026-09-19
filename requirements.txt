@@ -1,0 +1,8 @@
+# Everything needed to generate the sample data and run the dbt build/test
+# suite against DuckDB. Airflow has its own dependency set and is only
+# needed inside the Docker containers (see docker-compose.yml) -- it is
+# deliberately NOT listed here so `pip install -r requirements.txt` stays
+# fast for anyone just running the dbt layer.
+duckdb==1.5.5
+dbt-core==1.12.5
+dbt-duckdb==1.11.0
